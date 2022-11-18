@@ -25,48 +25,54 @@ from torch.cuda.amp import autocast, GradScaler
 import glob
 import ast
 
-all_path = glob.glob('data/interim/*/*.npy')
-train = pd.read_csv('data/raw/train_metadata.csv')
-train['new_target'] = train['primary_label'] + ' ' + train['secondary_labels'].map(lambda x: ' '.join(ast.literal_eval(x)))
-train['len_new_target'] = train['new_target'].map(lambda x: len(x.split()))
+all_path = glob.glob("data/interim/*/*.npy")
+train = pd.read_csv("data/raw/train_metadata.csv")
+train["new_target"] = (
+    train["primary_label"]
+    + " "
+    + train["secondary_labels"].map(lambda x: " ".join(ast.literal_eval(x)))
+)
+train["len_new_target"] = train["new_target"].map(lambda x: len(x.split()))
 
-path_df = pd.DataFrame(all_path, columns=['file_path'])
-path_df['filename'] = path_df['file_path'].map(lambda x: x.split('/')[-2]+'/'+x.split('/')[-1][:-4])
-train = pd.merge(train, path_df, on='filename')
+path_df = pd.DataFrame(all_path, columns=["file_path"])
+path_df["filename"] = path_df["file_path"].map(
+    lambda x: x.split("/")[-2] + "/" + x.split("/")[-1][:-4]
+)
+train = pd.merge(train, path_df, on="filename")
 
 Fold = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-for n, (trn_index, val_index) in enumerate(Fold.split(train, train['primary_label'])):
-    train.loc[val_index, 'kfold'] = int(n)
-train['kfold'] = train['kfold'].astype(int)
-train.to_csv('train_folds.csv', index=False)
+for n, (trn_index, val_index) in enumerate(Fold.split(train, train["primary_label"])):
+    train.loc[val_index, "kfold"] = int(n)
+train["kfold"] = train["kfold"].astype(int)
+train.to_csv("train_folds.csv", index=False)
 
 
 class CFG:
     ######################
     # Globals #
     ######################
-    EXP_ID = 'EX005'
+    EXP_ID = "EX005"
     seed = 71
     epochs = 23
     cutmix_and_mixup_epochs = 18
-    folds = [0] # [0, 1, 2, 3, 4]
+    folds = [0]  # [0, 1, 2, 3, 4]
     N_FOLDS = 5
     LR = 1e-3
     ETA_MIN = 1e-6
     WEIGHT_DECAY = 1e-6
-    train_bs = 16 # 32
-    valid_bs = 32 # 64
+    train_bs = 16  # 32
+    valid_bs = 32  # 64
     base_model_name = "tf_efficientnet_b0_ns"
     EARLY_STOPPING = True
-    DEBUG = False # True
-    EVALUATION = 'AUC'
+    DEBUG = False  # True
+    EVALUATION = "AUC"
     apex = True
 
     pooling = "max"
     pretrained = True
     num_classes = 152
     in_channels = 3
-    target_columns = 'afrsil1 akekee akepa1 akiapo akikik amewig aniani apapan arcter \
+    target_columns = "afrsil1 akekee akepa1 akiapo akikik amewig aniani apapan arcter \
                       barpet bcnher belkin1 bkbplo bknsti bkwpet blkfra blknod bongul \
                       brant brnboo brnnod brnowl brtcur bubsan buffle bulpet burpar buwtea \
                       cacgoo1 calqua cangoo canvas caster1 categr chbsan chemun chukar cintea \
@@ -78,36 +84,33 @@ class CFG:
                       norsho nutman oahama omao osprey pagplo palila parjae pecsan peflov perfal pibgre pomjae puaioh \
                       reccar redava redjun redpha1 refboo rempar rettro ribgul rinduc rinphe rocpig rorpar rudtur ruff \
                       saffin sander semplo sheowl shtsan skylar snogoo sooshe sooter1 sopsku1 sora spodov sposan \
-                      towsol wantat1 warwhe1 wesmea wessan wetshe whfibi whiter whttro wiltur yebcar yefcan zebdov'.split()
+                      towsol wantat1 warwhe1 wesmea wessan wetshe whfibi whiter whttro wiltur yebcar yefcan zebdov".split()
 
-    img_size = 224 # 128
+    img_size = 224  # 128
     main_metric = "epoch_f1_at_03"
 
     period = 5
-    n_mels = 224 # 128
+    n_mels = 224  # 128
     fmin = 20
     fmax = 16000
     n_fft = 2048
     hop_length = 512
     sample_rate = 32000
-    melspectrogram_parameters = {
-        "n_mels": 224, # 128,
-        "fmin": 20,
-        "fmax": 16000
-    }
-    
-    
+    melspectrogram_parameters = {"n_mels": 224, "fmin": 20, "fmax": 16000}  # 128,
+
+
 class AudioParams:
     """
     Parameters used for the audio data
     """
+
     sr = CFG.sample_rate
     duration = CFG.period
     # Melspectrogram
     n_mels = CFG.n_mels
     fmin = CFG.fmin
     fmax = CFG.fmax
-    
+
 
 class Compose:
     def __init__(self, transforms: list):
@@ -149,7 +152,7 @@ class OneOf(Compose):
     def __call__(self, y: np.ndarray, sr):
         data = y
         if self.transforms_ps and (random.random() < self.p):
-            random_state = np.random.RandomState(random.randint(0, 2 ** 32 - 1))
+            random_state = np.random.RandomState(random.randint(0, 2**32 - 1))
             t = random_state.choice(self.transforms, p=self.transforms_ps)
             data = t(y, sr)
         return data
@@ -196,11 +199,11 @@ class GaussianNoise(AudioTransform):
 
     def apply(self, y: np.ndarray, **params):
         snr = np.random.uniform(self.min_snr, self.max_snr)
-        a_signal = np.sqrt(y ** 2).max()
+        a_signal = np.sqrt(y**2).max()
         a_noise = a_signal / (10 ** (snr / 20))
 
         white_noise = np.random.randn(len(y))
-        a_white = np.sqrt(white_noise ** 2).max()
+        a_white = np.sqrt(white_noise**2).max()
         augmented = (y + white_noise * 1 / a_white * a_noise).astype(y.dtype)
         return augmented
 
@@ -214,11 +217,11 @@ class PinkNoise(AudioTransform):
 
     def apply(self, y: np.ndarray, **params):
         snr = np.random.uniform(self.min_snr, self.max_snr)
-        a_signal = np.sqrt(y ** 2).max()
+        a_signal = np.sqrt(y**2).max()
         a_noise = a_signal / (10 ** (snr / 20))
 
         pink_noise = cn.powerlaw_psd_gaussian(1, len(y))
-        a_pink = np.sqrt(pink_noise ** 2).max()
+        a_pink = np.sqrt(pink_noise**2).max()
         augmented = (y + pink_noise * 1 / a_pink * a_noise).astype(y.dtype)
         return augmented
 
@@ -311,15 +314,15 @@ class CosineVolume(AudioTransform):
         cosine = np.cos(np.arange(len(y)) / len(y) * np.pi * 2)
         dbs = _db2float(cosine * db)
         return y * dbs
-    
+
 
 import os
 
-OUTPUT_DIR = f'./'
+OUTPUT_DIR = f"./"
 if not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)
-   
-    
+
+
 def set_seed(seed=42):
     random.seed(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
@@ -329,9 +332,10 @@ def set_seed(seed=42):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    
+
+
 set_seed(CFG.seed)
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def calc_loss(y_true, y_pred):
@@ -358,31 +362,35 @@ class AverageMeter(object):
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
-        
+
 
 class MetricMeter(object):
     def __init__(self):
         self.reset()
-    
+
     def reset(self):
         self.y_true = []
         self.y_pred = []
-    
+
     def update(self, y_true, y_pred):
         self.y_true.extend(y_true.cpu().detach().numpy().tolist())
         self.y_pred.extend(y_pred["clipwise_output"].cpu().detach().numpy().tolist())
 
     @property
     def avg(self):
-        self.f1_03 = metrics.f1_score(np.array(self.y_true), np.array(self.y_pred) > 0.3, average="micro")
-        self.f1_05 = metrics.f1_score(np.array(self.y_true), np.array(self.y_pred) > 0.5, average="micro")
-        
+        self.f1_03 = metrics.f1_score(
+            np.array(self.y_true), np.array(self.y_pred) > 0.3, average="micro"
+        )
+        self.f1_05 = metrics.f1_score(
+            np.array(self.y_true), np.array(self.y_pred) > 0.5, average="micro"
+        )
+
         return {
-            "f1_at_03" : self.f1_03,
-            "f1_at_05" : self.f1_05,
+            "f1_at_03": self.f1_03,
+            "f1_at_05": self.f1_05,
         }
-    
-    
+
+
 # https://www.kaggle.com/c/rfcx-species-audio-detection/discussion/213075
 class BCEFocalLoss(nn.Module):
     def __init__(self, alpha=0.25, gamma=2.0):
@@ -391,11 +399,12 @@ class BCEFocalLoss(nn.Module):
         self.gamma = gamma
 
     def forward(self, preds, targets):
-        bce_loss = nn.BCEWithLogitsLoss(reduction='none')(preds, targets)
+        bce_loss = nn.BCEWithLogitsLoss(reduction="none")(preds, targets)
         probas = torch.sigmoid(preds)
-        loss = targets * self.alpha * \
-            (1. - probas)**self.gamma * bce_loss + \
-            (1. - targets) * probas**self.gamma * bce_loss
+        loss = (
+            targets * self.alpha * (1.0 - probas) ** self.gamma * bce_loss
+            + (1.0 - targets) * probas**self.gamma * bce_loss
+        )
         loss = loss.mean()
         return loss
 
@@ -419,7 +428,7 @@ class BCEFocal2WayLoss(nn.Module):
         aux_loss = self.focal(clipwise_output_with_max, target)
 
         return self.weights[0] * loss + self.weights[1] * aux_loss
-    
+
 
 def compute_melspec(y, params):
     """
@@ -431,7 +440,11 @@ def compute_melspec(y, params):
         np array -- Mel-spectrogram
     """
     melspec = librosa.feature.melspectrogram(
-        y=y, sr=params.sr, n_mels=params.n_mels, fmin=params.fmin, fmax=params.fmax,
+        y=y,
+        sr=params.sr,
+        n_mels=params.n_mels,
+        fmin=params.fmin,
+        fmax=params.fmax,
     )
 
     melspec = librosa.power_to_db(melspec).astype(np.float32)
@@ -460,11 +473,11 @@ def crop_or_pad(y, length, sr, train=True, probs=None):
             start = np.random.randint(len(y) - length)
         else:
             start = (
-                    np.random.choice(np.arange(len(probs)), p=probs) + np.random.random()
+                np.random.choice(np.arange(len(probs)), p=probs) + np.random.random()
             )
             start = int(sr * (start))
 
-        y = y[start: start + length]
+        y = y[start : start + length]
 
     return y.astype(np.float32)
 
@@ -501,32 +514,37 @@ def mono_to_color(X, eps=1e-6, mean=None, std=None):
     return V
 
 
-mean = (0.485, 0.456, 0.406) # RGB
-std = (0.229, 0.224, 0.225) # RGB
+mean = (0.485, 0.456, 0.406)  # RGB
+std = (0.229, 0.224, 0.225)  # RGB
 
 albu_transforms = {
-    'train' : A.Compose([
+    "train": A.Compose(
+        [
             A.HorizontalFlip(p=0.5),
-            A.OneOf([
-                A.Cutout(max_h_size=5, max_w_size=16),
-                A.CoarseDropout(max_holes=4),
-            ], p=0.5),
+            A.OneOf(
+                [
+                    A.Cutout(max_h_size=5, max_w_size=16),
+                    A.CoarseDropout(max_holes=4),
+                ],
+                p=0.5,
+            ),
             A.Normalize(mean, std),
-    ]),
-    'valid' : A.Compose([
+        ]
+    ),
+    "valid": A.Compose(
+        [
             A.Normalize(mean, std),
-    ]),
+        ]
+    ),
 }
 
 
 class WaveformDataset(torch.utils.data.Dataset):
-    def __init__(self,
-                 df: pd.DataFrame,
-                 mode='train'):
+    def __init__(self, df: pd.DataFrame, mode="train"):
         self.df = df
         self.mode = mode
 
-        if mode == 'train':
+        if mode == "train":
             self.wave_transforms = Compose(
                 [
                     OneOf(
@@ -554,7 +572,7 @@ class WaveformDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx: int):
         SR = 32000
         sample = self.df.loc[idx, :]
-        
+
         wav_path = sample["file_path"]
         labels = sample["new_target"]
 
@@ -565,21 +583,27 @@ class WaveformDataset(torch.utils.data.Dataset):
         #     start = np.random.randint(SEC)
         #     end = start+AudioParams.duration
         if len(y) > 0:
-            y = y[:AudioParams.duration*SR]
+            y = y[: AudioParams.duration * SR]
 
             if self.wave_transforms:
                 y = self.wave_transforms(y, sr=SR)
 
-        y = np.concatenate([y, y, y])[:AudioParams.duration * AudioParams.sr] 
-        y = crop_or_pad(y, AudioParams.duration * AudioParams.sr, sr=AudioParams.sr, train=True, probs=None)
+        y = np.concatenate([y, y, y])[: AudioParams.duration * AudioParams.sr]
+        y = crop_or_pad(
+            y,
+            AudioParams.duration * AudioParams.sr,
+            sr=AudioParams.sr,
+            train=True,
+            probs=None,
+        )
         image = compute_melspec(y, AudioParams)
         image = mono_to_color(image)
         image = image.astype(np.uint8)
-        
+
         # image = np.load(wav_path) # (224, 313, 3)
-        image = albu_transforms[self.mode](image=image)['image']
+        image = albu_transforms[self.mode](image=image)["image"]
         image = image.T
-        
+
         targets = np.zeros(len(CFG.target_columns), dtype=float)
         for ebird_code in labels.split():
             targets[CFG.target_columns.index(ebird_code)] = 1.0
@@ -588,18 +612,18 @@ class WaveformDataset(torch.utils.data.Dataset):
             "image": image,
             "targets": targets,
         }
-        
-        
+
+
 def init_layer(layer):
     nn.init.xavier_uniform_(layer.weight)
 
     if hasattr(layer, "bias"):
         if layer.bias is not None:
-            layer.bias.data.fill_(0.)
+            layer.bias.data.fill_(0.0)
 
 
 def init_bn(bn):
-    bn.bias.data.fill_(0.)
+    bn.bias.data.fill_(0.0)
     bn.weight.data.fill_(1.0)
 
 
@@ -648,16 +672,14 @@ def pad_framewise_output(framewise_output: torch.Tensor, frames_num: int):
         framewise_output.unsqueeze(1),
         size=(frames_num, framewise_output.size(2)),
         align_corners=True,
-        mode="bilinear").squeeze(1)
+        mode="bilinear",
+    ).squeeze(1)
 
     return output
 
 
 class AttBlockV2(nn.Module):
-    def __init__(self,
-                 in_features: int,
-                 out_features: int,
-                 activation="linear"):
+    def __init__(self, in_features: int, out_features: int, activation="linear"):
         super().__init__()
 
         self.activation = activation
@@ -667,14 +689,16 @@ class AttBlockV2(nn.Module):
             kernel_size=1,
             stride=1,
             padding=0,
-            bias=True)
+            bias=True,
+        )
         self.cla = nn.Conv1d(
             in_channels=in_features,
             out_channels=out_features,
             kernel_size=1,
             stride=1,
             padding=0,
-            bias=True)
+            bias=True,
+        )
 
         self.init_weights()
 
@@ -690,23 +714,30 @@ class AttBlockV2(nn.Module):
         return x, norm_att, cla
 
     def nonlinear_transform(self, x):
-        if self.activation == 'linear':
+        if self.activation == "linear":
             return x
-        elif self.activation == 'sigmoid':
+        elif self.activation == "sigmoid":
             return torch.sigmoid(x)
 
 
 class TimmSED(nn.Module):
-    def __init__(self, base_model_name: str, pretrained=False, num_classes=24, in_channels=1):
+    def __init__(
+        self, base_model_name: str, pretrained=False, num_classes=24, in_channels=1
+    ):
         super().__init__()
 
-        self.spec_augmenter = SpecAugmentation(time_drop_width=64//2, time_stripes_num=2,
-                                               freq_drop_width=8//2, freq_stripes_num=2)
+        self.spec_augmenter = SpecAugmentation(
+            time_drop_width=64 // 2,
+            time_stripes_num=2,
+            freq_drop_width=8 // 2,
+            freq_stripes_num=2,
+        )
 
         self.bn0 = nn.BatchNorm2d(CFG.n_mels)
 
         base_model = timm.create_model(
-            base_model_name, pretrained=pretrained, in_chans=in_channels)
+            base_model_name, pretrained=pretrained, in_chans=in_channels
+        )
         layers = list(base_model.children())[:-2]
         self.encoder = nn.Sequential(*layers)
 
@@ -716,18 +747,16 @@ class TimmSED(nn.Module):
             in_features = base_model.classifier.in_features
 
         self.fc1 = nn.Linear(in_features, in_features, bias=True)
-        self.att_block = AttBlockV2(
-            in_features, num_classes, activation="sigmoid")
+        self.att_block = AttBlockV2(in_features, num_classes, activation="sigmoid")
 
         self.init_weight()
 
     def init_weight(self):
         init_bn(self.bn0)
         init_layer(self.fc1)
-        
 
     def forward(self, input_data):
-        x = input_data # (batch_size, 3, time_steps, mel_bins)
+        x = input_data  # (batch_size, 3, time_steps, mel_bins)
 
         frames_num = x.shape[2]
 
@@ -742,7 +771,7 @@ class TimmSED(nn.Module):
         x = x.transpose(2, 3)
 
         x = self.encoder(x)
-        
+
         # Aggregate in frequency axis
         x = torch.mean(x, dim=3)
 
@@ -764,27 +793,26 @@ class TimmSED(nn.Module):
         interpolate_ratio = frames_num // segmentwise_output.size(1)
 
         # Get framewise output
-        framewise_output = interpolate(segmentwise_output,
-                                       interpolate_ratio)
+        framewise_output = interpolate(segmentwise_output, interpolate_ratio)
         framewise_output = pad_framewise_output(framewise_output, frames_num)
 
         framewise_logit = interpolate(segmentwise_logit, interpolate_ratio)
         framewise_logit = pad_framewise_output(framewise_logit, frames_num)
 
         output_dict = {
-            'framewise_output': framewise_output,
-            'clipwise_output': clipwise_output,
-            'logit': logit,
-            'framewise_logit': framewise_logit,
+            "framewise_output": framewise_output,
+            "clipwise_output": clipwise_output,
+            "logit": logit,
+            "framewise_logit": framewise_logit,
         }
 
         return output_dict
-    
-    
+
+
 def rand_bbox(size, lam):
     W = size[2]
     H = size[3]
-    cut_rat = np.sqrt(1. - lam)
+    cut_rat = np.sqrt(1.0 - lam)
     cut_w = int(W * cut_rat)
     cut_h = int(H * cut_rat)
 
@@ -814,6 +842,7 @@ def cutmix(data, targets, alpha):
     new_targets = [targets, shuffled_targets, lam]
     return data, new_targets
 
+
 def mixup(data, targets, alpha):
     indices = torch.randperm(data.size(0))
     shuffled_data = data[indices]
@@ -829,6 +858,7 @@ def cutmix_criterion(preds, new_targets):
     targets1, targets2, lam = new_targets[0], new_targets[1], new_targets[2]
     criterion = BCEFocal2WayLoss()
     return lam * criterion(preds, targets1) + (1 - lam) * criterion(preds, targets2)
+
 
 def mixup_criterion(preds, new_targets):
     targets1, targets2, lam = new_targets[0], new_targets[1], new_targets[2]
@@ -848,19 +878,19 @@ def train_fn(model, data_loader, device, optimizer, scheduler):
     losses = AverageMeter()
     scores = MetricMeter()
     tk0 = tqdm(data_loader, total=len(data_loader))
-    
+
     for data in tk0:
         optimizer.zero_grad()
-        inputs = data['image'].to(device)
-        targets = data['targets'].to(device)
+        inputs = data["image"].to(device)
+        targets = data["targets"].to(device)
         with autocast(enabled=CFG.apex):
             outputs = model(inputs)
             loss = loss_fn(outputs, targets)
-        
+
         scaler.scale(loss).backward()
         scaler.step(optimizer)
         scaler.update()
-        
+
         scheduler.step()
         losses.update(loss.item(), inputs.size(0))
         scores.update(targets, outputs)
@@ -877,14 +907,14 @@ def train_mixup_cutmix_fn(model, data_loader, device, optimizer, scheduler):
 
     for data in tk0:
         optimizer.zero_grad()
-        inputs = data['image'].to(device)
-        targets = data['targets'].to(device)
+        inputs = data["image"].to(device)
+        targets = data["targets"].to(device)
 
-        if np.random.rand()<0.5:
+        if np.random.rand() < 0.5:
             inputs, new_targets = mixup(inputs, targets, 0.4)
             with autocast(enabled=CFG.apex):
                 outputs = model(inputs)
-                loss = mixup_criterion(outputs, new_targets) 
+                loss = mixup_criterion(outputs, new_targets)
         else:
             inputs, new_targets = cutmix(inputs, targets, 0.4)
             with autocast(enabled=CFG.apex):
@@ -894,7 +924,7 @@ def train_mixup_cutmix_fn(model, data_loader, device, optimizer, scheduler):
         scaler.scale(loss).backward()
         scaler.step(optimizer)
         scaler.update()
-        
+
         scheduler.step()
         losses.update(loss.item(), inputs.size(0))
         scores.update(new_targets[0], outputs)
@@ -910,8 +940,8 @@ def valid_fn(model, data_loader, device):
     valid_preds = []
     with torch.no_grad():
         for data in tk0:
-            inputs = data['image'].to(device)
-            targets = data['targets'].to(device)
+            inputs = data["image"].to(device)
+            targets = data["targets"].to(device)
             outputs = model(inputs)
             loss = loss_fn(outputs, targets)
             losses.update(loss.item(), inputs.size(0))
@@ -927,8 +957,8 @@ def inference_fn(model, data_loader, device):
     final_target = []
     with torch.no_grad():
         for b_idx, data in enumerate(tk0):
-            inputs = data['image'].to(device)
-            targets = data['targets'].to(device).detach().cpu().numpy().tolist()
+            inputs = data["image"].to(device)
+            targets = data["targets"].to(device).detach().cpu().numpy().tolist()
             output = model(inputs)
             output = output["clipwise_output"].cpu().detach().cpu().numpy().tolist()
             final_output.extend(output)
@@ -937,7 +967,7 @@ def inference_fn(model, data_loader, device):
 
 
 def calc_cv(model_paths):
-    df = pd.read_csv('train_folds.csv')
+    df = pd.read_csv("train_folds.csv")
     y_true = []
     y_pred = []
     for fold, model_path in enumerate(model_paths):
@@ -945,16 +975,21 @@ def calc_cv(model_paths):
             base_model_name=CFG.base_model_name,
             pretrained=CFG.pretrained,
             num_classes=CFG.num_classes,
-            in_channels=CFG.in_channels)
+            in_channels=CFG.in_channels,
+        )
 
         model.to(device)
         model.load_state_dict(torch.load(model_path))
         model.eval()
 
         val_df = df[df.kfold == fold].reset_index(drop=True)
-        dataset = WaveformDataset(df=val_df, mode='valid')
+        dataset = WaveformDataset(df=val_df, mode="valid")
         dataloader = torch.utils.data.DataLoader(
-            dataset, batch_size=CFG.valid_bs, num_workers=0, pin_memory=True, shuffle=False
+            dataset,
+            batch_size=CFG.valid_bs,
+            num_workers=0,
+            pin_memory=True,
+            shuffle=False,
         )
 
         final_output, final_target = inference_fn(model, dataloader, device)
@@ -962,14 +997,16 @@ def calc_cv(model_paths):
         y_true.extend(final_target)
         torch.cuda.empty_cache()
 
-        f1_03 = metrics.f1_score(np.array(y_true), np.array(y_pred) > 0.3, average="micro")
-        print(f'micro f1_0.3 {f1_03}')
+        f1_03 = metrics.f1_score(
+            np.array(y_true), np.array(y_pred) > 0.3, average="micro"
+        )
+        print(f"micro f1_0.3 {f1_03}")
 
     f1_03 = metrics.f1_score(np.array(y_true), np.array(y_pred) > 0.3, average="micro")
     f1_05 = metrics.f1_score(np.array(y_true), np.array(y_pred) > 0.5, average="micro")
 
-    print(f'overall micro f1_0.3 {f1_03}')
-    print(f'overall micro f1_0.5 {f1_05}')
+    print(f"overall micro f1_0.3 {f1_03}")
+    print(f"overall micro f1_0.5 {f1_05}")
     return
 
 
@@ -984,24 +1021,37 @@ for fold in range(5):
     trn_df = train[train.kfold != fold].reset_index(drop=True)
     val_df = train[train.kfold == fold].reset_index(drop=True)
 
-    train_dataset = WaveformDataset(df=trn_df, mode='train')
+    train_dataset = WaveformDataset(df=trn_df, mode="train")
     train_dataloader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=CFG.train_bs, num_workers=0, pin_memory=True, shuffle=True
+        train_dataset,
+        batch_size=CFG.train_bs,
+        num_workers=0,
+        pin_memory=True,
+        shuffle=True,
     )
-    
-    valid_dataset = WaveformDataset(df=val_df, mode='valid')
+
+    valid_dataset = WaveformDataset(df=val_df, mode="valid")
     valid_dataloader = torch.utils.data.DataLoader(
-        valid_dataset, batch_size=CFG.valid_bs, num_workers=0, pin_memory=True, shuffle=False
+        valid_dataset,
+        batch_size=CFG.valid_bs,
+        num_workers=0,
+        pin_memory=True,
+        shuffle=False,
     )
 
     model = TimmSED(
         base_model_name=CFG.base_model_name,
         pretrained=CFG.pretrained,
         num_classes=CFG.num_classes,
-        in_channels=CFG.in_channels)
+        in_channels=CFG.in_channels,
+    )
 
-    optimizer = transformers.AdamW(model.parameters(), lr=CFG.LR, weight_decay=CFG.WEIGHT_DECAY)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, eta_min=CFG.ETA_MIN, T_max=500)
+    optimizer = transformers.AdamW(
+        model.parameters(), lr=CFG.LR, weight_decay=CFG.WEIGHT_DECAY
+    )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, eta_min=CFG.ETA_MIN, T_max=500
+    )
 
     model = model.to(device)
 
@@ -1009,30 +1059,44 @@ for fold in range(5):
     best_score = -np.inf
 
     for epoch in range(CFG.epochs):
-        print("Starting {} epoch...".format(epoch+1))
+        print("Starting {} epoch...".format(epoch + 1))
 
         start_time = time.time()
 
         if epoch < CFG.cutmix_and_mixup_epochs:
-            train_avg, train_loss = train_mixup_cutmix_fn(model, train_dataloader, device, optimizer, scheduler)
-        else: 
-            train_avg, train_loss = train_fn(model, train_dataloader, device, optimizer, scheduler)
+            train_avg, train_loss = train_mixup_cutmix_fn(
+                model, train_dataloader, device, optimizer, scheduler
+            )
+        else:
+            train_avg, train_loss = train_fn(
+                model, train_dataloader, device, optimizer, scheduler
+            )
 
         valid_avg, valid_loss = valid_fn(model, valid_dataloader, device)
 
         elapsed = time.time() - start_time
 
-        print(f'Epoch {epoch+1} - avg_train_loss: {train_loss:.5f}  avg_val_loss: {valid_loss:.5f}  time: {elapsed:.0f}s')
-        print(f"Epoch {epoch+1} - train_f1_at_03:{train_avg['f1_at_03']:0.5f}  valid_f1_at_03:{valid_avg['f1_at_03']:0.5f}")
-        print(f"Epoch {epoch+1} - train_f1_at_05:{train_avg['f1_at_05']:0.5f}  valid_f1_at_05:{valid_avg['f1_at_05']:0.5f}")
+        print(
+            f"Epoch {epoch+1} - avg_train_loss: {train_loss:.5f}  avg_val_loss: {valid_loss:.5f}  time: {elapsed:.0f}s"
+        )
+        print(
+            f"Epoch {epoch+1} - train_f1_at_03:{train_avg['f1_at_03']:0.5f}  valid_f1_at_03:{valid_avg['f1_at_03']:0.5f}"
+        )
+        print(
+            f"Epoch {epoch+1} - train_f1_at_05:{train_avg['f1_at_05']:0.5f}  valid_f1_at_05:{valid_avg['f1_at_05']:0.5f}"
+        )
 
-        if valid_avg['f1_at_03'] > best_score:
-            print(f">>>>>>>> Model Improved From {best_score} ----> {valid_avg['f1_at_03']}")
-            print(f"other scores here... {valid_avg['f1_at_03']}, {valid_avg['f1_at_05']}")
-            torch.save(model.state_dict(), f'fold-{fold}.bin')
-            best_score = valid_avg['f1_at_03']
-            
-            
-model_paths = [f'fold-{i}.bin' for i in CFG.folds]
+        if valid_avg["f1_at_03"] > best_score:
+            print(
+                f">>>>>>>> Model Improved From {best_score} ----> {valid_avg['f1_at_03']}"
+            )
+            print(
+                f"other scores here... {valid_avg['f1_at_03']}, {valid_avg['f1_at_05']}"
+            )
+            torch.save(model.state_dict(), f"fold-{fold}.bin")
+            best_score = valid_avg["f1_at_03"]
+
+
+model_paths = [f"fold-{i}.bin" for i in CFG.folds]
 
 calc_cv(model_paths)
