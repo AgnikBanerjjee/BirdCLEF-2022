@@ -5,17 +5,28 @@ from dotenv import find_dotenv, load_dotenv
 from yacs.config import CfgNode as ConfigurationNode
 from pathlib import Path
 
+load_dotenv(find_dotenv())
+DIR_RAW = Path(os.getenv("DIR_RAW"))
+
 # YACS overwrites these settings using YAML
 __C = ConfigurationNode()
 cfg = __C
 
 # general configs
-__C.NUM_WORKERS = 4
+__C.CPU_NUM = 4
 
 # dataset configs
 __C.DATASET = ConfigurationNode()
 __C.DATASET.SAMPLING_RATE = 32000
 __C.DATASET.DURATION = 5
+__C.DATASET.N_MELS = 224
+__C.DATASET.FMIN = 20
+__C.DATASET.FMAX = 16000
+__C.DATASET.N_FFT = 2048
+__C.DATASET.HOP_LENGTH = 512
+__C.DATASET.IMG_SIZE = 224
+__C.DATASET.IMG_CHANNELS = 3
+__C.DATASET.TARGET_COLUMNS = sorted(os.listdir(DIR_RAW / "train_audio"))
 
 
 def get_cfg_defaults():

@@ -58,11 +58,11 @@ def make_dataset(cfg):
     train["file_path"] = DIR_RAW / "train_audio" / train["filename"]
     paths = train["file_path"].values
 
-    classes = sorted(os.listdir(DIR_RAW / "train_audio"))
+    classes = cfg.DATASET.TARGET_COLUMNS
     for dir_ in classes:
         _ = os.makedirs(DIR_PROCESSED / dir_, exist_ok=True)
 
-    _ = Parallel(n_jobs=cfg.NUM_WORKERS)(
+    _ = Parallel(n_jobs=cfg.CPU_NUM)(
         delayed(save_)(path, cfg) for path in tqdm(paths)
     )
 
